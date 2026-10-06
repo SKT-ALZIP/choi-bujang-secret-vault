@@ -358,3 +358,121 @@ X-Content-Type-Options: nosniff
 - `/aleph.json`이 배포 주소에서 열리는가?
 - 첫 화면 응답에 `X-Content-Type-Options: nosniff`가 있는가?
 - 서버 전용 키, 토큰, 비밀번호가 Git 저장소나 제출 묶음에 포함되지 않았는가?
+
+
+---
+
+## 5단계 저장점 — 자료 요청을 서버 한곳으로 모음
+
+5단계에서는 브라우저가 Supabase의 메모 저장소를 직접 호출하지 못하도록 직접 권한을 회수했습니다.
+
+`public.vault_notes`의 `PUBLIC`, `anon`, `authenticated` 테이블 권한과 관련 시퀀스 권한을 제거했습니다.
+
+Vercel 서버 함수는 기존 서버 전용 설정을 유지하며 메모 읽기·추가·수정·삭제를 수행합니다.
+
+서버의 로그인 토큰 검증과 `owner_id` 소유권 검사는 4단계와 동일하게 유지합니다.
+
+브라우저의 메모 요청은 다음 서버 함수만 사용합니다.
+
+- `GET /api/notes`
+- `POST /api/notes`
+- `GET /api/notes/:id`
+- `PUT /api/notes/:id`
+- `DELETE /api/notes/:id`
+
+로그인도 `/api/login` 서버 함수를 통해 처리하여 화면 코드에서 Supabase publishable 키와 Supabase 브라우저 SDK를 제거했습니다.
+
+원본 자료 API는 다음 주소입니다.
+
+```text
+https://qzyloovynaqxfbqzhyro.supabase.co/rest/v1/vault_notes
+```
+
+`aleph.config.json`의 `originalApiUrl`에도 쿼리 없는 같은 HTTPS 주소를 기록했습니다.
+
+### 직접 자료 접근 권한 회수
+
+5단계에서는 다음 역할이 `vault_notes` 테이블을 직접 읽거나 수정할 수 없도록 권한을 회수했습니다.
+
+```text
+PUBLIC
+anon
+authenticated
+```
+
+확인 쿼리 결과에서 위 역할의 `vault_notes` 직접 권한은 0 rows여야 합니다.
+
+Vercel 서버 함수가 사용하는 서버 전용 역할은 이 직접 권한 회수 대상에 포함하지 않습니다.
+
+따라서 브라우저는 자료 저장소를 직접 호출하지 않고 다음 흐름을 사용합니다.
+
+```text
+브라우저
+  ↓
+Vercel 서버 함수
+  ↓
+Supabase vault_notes
+```
+
+### 5단계 직접 확인
+
+A 계정으로 로그인한 상태에서 메모 읽기·추가·수정·삭제가 서버 함수를 통해 계속 작동해야 합니다.
+
+비로그인 상태에서 다음 주소를 요청합니다.
+
+```text
+/api/notes
+```
+
+정상 결과는 HTTP 401 또는 403과 JSON 오류입니다.
+
+예:
+
+```json
+{
+  "error": "AUTH_REQUIRED"
+}
+```
+
+B 로그인 상태에서 A 메모 UUID를 직접 요청하면 자료가 반환되지 않아야 합니다.
+
+원본 자료 API는 다음 주소입니다.
+
+```text
+https://qzyloovynaqxfbqzhyro.supabase.co/rest/v1/vault_notes
+```
+
+공개 역할로 이 원본 API를 직접 호출해도 메모가 반환되지 않아야 합니다.
+
+### 5단계 100점 추가 확인
+
+다음 세 조건을 모두 유지합니다.
+
+1. `/aleph.json`의 `allowedRoutes`에 허용된 자료 API 경로가 하나 이상 있어야 합니다.
+2. 첫 화면 응답에 다음 보안 헤더가 있어야 합니다.
+
+```text
+X-Content-Type-Options: nosniff
+```
+
+3. 첫 화면 코드에는 Supabase 공개 키 또는 anon 키가 없어야 합니다.
+
+다음 명령은 모두 아무 출력이 없어야 합니다.
+
+```sh
+git grep -n "sb_publishable_" -- public
+git grep -n "@supabase/supabase-js" -- public
+```
+
+### 5단계 제출 전 확인
+
+- A의 메모 읽기·추가·수정·삭제가 정상인가?
+- B가 A의 메모 UUID를 요청하면 거부되는가?
+- 무로그인 `/api/notes` 요청이 401 또는 403과 JSON 오류로 거부되는가?
+- `PUBLIC`, `anon`, `authenticated`의 `vault_notes` 직접 권한이 모두 회수되었는가?
+- 원본 Supabase 자료 API를 공개 역할로 직접 불러도 메모가 반환되지 않는가?
+- 브라우저가 메모 자료를 `/api/notes` 서버 함수로만 요청하는가?
+- `/aleph.json`의 `allowedRoutes`에 하나 이상의 경로가 있는가?
+- 첫 화면에 `X-Content-Type-Options: nosniff`가 있는가?
+- 첫 화면 코드에 `sb_publishable_...` 또는 anon 키가 없는가?
+- 서버 전용 키, 토큰, 비밀번호가 Git 저장소나 제출 묶음에 포함되지 않았는가?

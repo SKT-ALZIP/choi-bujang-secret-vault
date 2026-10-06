@@ -196,7 +196,8 @@ async function checkStep3(config) {
     {
       attackId: 'authenticated_crud',
       expected: '정상 로그인 사용자는 가상 메모 추가·수정·삭제가 가능해야 함',
-      observed: '미실행: 제출 묶음 자기 점검에는 로그인 비밀번호나 토큰을 넣지 않으며, 배포 화면에서 별도로 확인함',
+      observed:
+        '미실행: 제출 묶음 자기 점검에는 로그인 비밀번호나 토큰을 넣지 않으며, 배포 화면에서 별도로 확인함',
     },
   ];
 }
@@ -300,6 +301,155 @@ async function checkStep4(config) {
   ];
 }
 
+async function checkStep5(config) {
+  const app = getApp(config);
+
+  const anonymousResponse = await fetch(
+    new URL('/api/notes', app),
+    {
+      redirect: 'error',
+      signal: AbortSignal.timeout(10000),
+    },
+  );
+
+  let anonymousDenied = false;
+
+  try {
+    const data = await anonymousResponse.json();
+
+    anonymousDenied =
+      (
+        anonymousResponse.status === 401
+        || anonymousResponse.status === 403
+      )
+      && typeof data?.error === 'string'
+      && data.error.length > 0;
+  } catch {
+    // 자료 API 거부 응답은 JSON이어야 한다.
+  }
+
+  const identityResponse = await fetch(
+    new URL('/aleph.json', app),
+    {
+      redirect: 'error',
+      signal: AbortSignal.timeout(10000),
+    },
+  );
+
+  let allowedRoutesAvailable = false;
+
+  if (identityResponse.ok) {
+    try {
+      const data = await identityResponse.json();
+
+      allowedRoutesAvailable =
+        data?.schema === 'aleph.defense.deployment.v1'
+        && data?.step === 5
+        && Array.isArray(data?.allowedRoutes)
+        && data.allowedRoutes.length > 0;
+    } catch {
+      // JSON이 아니면 실패.
+    }
+  }
+
+  const homeResponse = await fetch(
+    app,
+    {
+      redirect: 'error',
+      signal: AbortSignal.timeout(10000),
+    },
+  );
+
+  const nosniff =
+    homeResponse.headers
+      .get('x-content-type-options')
+      ?.toLowerCase() === 'nosniff';
+
+  let publicKeyAbsent = false;
+
+  if (homeResponse.ok) {
+    const html = await homeResponse.text();
+
+    publicKeyAbsent =
+      !html.includes('sb_publishable_')
+      && !html.includes('SUPABASE_PUBLISHABLE_KEY')
+      && !html.includes('@supabase/supabase-js');
+  }
+
+  let originalApiDenied = false;
+  let originalStatus = null;
+
+  try {
+    const originalResponse = await fetch(
+      config.originalApiUrl,
+      {
+        redirect: 'error',
+        signal: AbortSignal.timeout(10000),
+      },
+    );
+
+    originalStatus = originalResponse.status;
+
+    originalApiDenied =
+      originalResponse.status === 401
+      || originalResponse.status === 403;
+  } catch {
+    // 네트워크 오류도 직접 자료 조회 성공으로 취급하지 않는다.
+  }
+
+  return [
+    {
+      attackId: 'anonymous_api_denied',
+      expected:
+        '비로그인 메모 API 요청은 자료 없이 JSON 오류와 401 또는 403으로 거부되어야 함',
+      observed: anonymousDenied
+        ? `비로그인 자료 API가 HTTP ${anonymousResponse.status}로 거부됨`
+        : `비로그인 자료 API 거부 형식이 예상과 다름 (HTTP ${anonymousResponse.status})`,
+    },
+    {
+      attackId: 'original_api_direct_denied',
+      expected:
+        '원본 Supabase 자료 API를 자격 증명 없이 직접 읽을 수 없어야 함',
+      observed: originalApiDenied
+        ? `원본 자료 API 직접 요청이 HTTP ${originalStatus}로 거부됨`
+        : originalStatus === null
+          ? '원본 자료 API 직접 요청에서 자료를 확인하지 못함'
+          : `원본 자료 API 직접 요청이 예상 상태로 거부되지 않음 (HTTP ${originalStatus})`,
+    },
+    {
+      attackId: 'aleph_allowed_routes',
+      expected:
+        '/aleph.json의 allowedRoutes에 허용된 자료 API 경로가 하나 이상 있어야 함',
+      observed: allowedRoutesAvailable
+        ? '/aleph.json에서 5단계 allowedRoutes를 확인함'
+        : `/aleph.json의 allowedRoutes를 확인하지 못함 (HTTP ${identityResponse.status})`,
+    },
+    {
+      attackId: 'security_header_present',
+      expected:
+        '첫 화면 응답에 X-Content-Type-Options: nosniff가 있어야 함',
+      observed: nosniff
+        ? '첫 화면 응답에서 X-Content-Type-Options: nosniff를 확인함'
+        : '첫 화면 응답에서 nosniff 헤더를 확인하지 못함',
+    },
+    {
+      attackId: 'browser_public_key_absent',
+      expected:
+        '첫 화면 코드에 Supabase publishable 키 또는 브라우저 SDK가 없어야 함',
+      observed: publicKeyAbsent
+        ? '첫 화면 코드에서 Supabase 공개 키와 브라우저 SDK 참조가 보이지 않음'
+        : '첫 화면 코드에서 Supabase 공개 키 또는 브라우저 SDK 참조를 확인함',
+    },
+    {
+      attackId: 'owner_isolation_preserved',
+      expected:
+        '서버 함수의 로그인·소유자 검사가 유지되어 다른 사용자 메모 접근이 거부되어야 함',
+      observed:
+        '로그인 자격 증명을 제출 묶음에 넣지 않으며, 4단계에서 B→A UUID 404와 B→B UUID 200을 별도로 확인함',
+    },
+  ];
+}
+
 export async function runAttackChecks(config) {
   if (config.step === 1) {
     return checkStep1(config);
@@ -315,6 +465,10 @@ export async function runAttackChecks(config) {
 
   if (config.step === 4) {
     return checkStep4(config);
+  }
+
+  if (config.step === 5) {
+    return checkStep5(config);
   }
 
   throw new Error(
