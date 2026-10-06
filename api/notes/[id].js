@@ -71,6 +71,25 @@ function readJsonBody(req) {
   return null;
 }
 
+async function findOwnedNote(
+  supabaseClient,
+  id,
+  userId,
+) {
+  const { data, error } = await supabaseClient
+    .from('vault_notes')
+    .select('api_id, owner_id, title, content')
+    .eq('api_id', id)
+    .eq('owner_id', userId)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  return data;
+}
+
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
 
@@ -102,13 +121,15 @@ export default async function handler(req, res) {
   }
 
   if (req.method === 'GET') {
-    const { data, error } = await clients.supabase
-      .from('vault_notes')
-      .select('api_id, title, content')
-      .eq('api_id', id)
-      .maybeSingle();
+    let note;
 
-    if (error) {
+    try {
+      note = await findOwnedNote(
+        clients.supabase,
+        id,
+        login.userId,
+      );
+    } catch {
       console.error('vault_notes item read failed');
 
       return res.status(500).json({
@@ -116,16 +137,16 @@ export default async function handler(req, res) {
       });
     }
 
-    if (!data) {
+    if (!note) {
       return res.status(404).json({
         error: 'NOTE_NOT_FOUND',
       });
     }
 
     return res.status(200).json({
-      id: data.api_id,
-      title: data.title,
-      body: data.content,
+      id: note.api_id,
+      title: note.title,
+      body: note.content,
     });
   }
 
@@ -135,6 +156,16 @@ export default async function handler(req, res) {
     if (!body) {
       return res.status(400).json({
         error: 'INVALID_JSON',
+      });
+    }
+
+    if (
+      Object.prototype.hasOwnProperty.call(body, 'owner_id')
+      || Object.prototype.hasOwnProperty.call(body, 'userId')
+      || Object.prototype.hasOwnProperty.call(body, 'role')
+    ) {
+      return res.status(400).json({
+        error: 'OWNER_CHANGE_NOT_ALLOWED',
       });
     }
 
@@ -154,14 +185,38 @@ export default async function handler(req, res) {
       });
     }
 
+    let existing;
+
+    try {
+      existing = await findOwnedNote(
+        clients.supabase,
+        id,
+        login.userId,
+      );
+    } catch {
+      console.error('vault_notes ownership read failed');
+
+      return res.status(500).json({
+        error: 'DATA_READ_FAILED',
+      });
+    }
+
+    if (!existing) {
+      return res.status(404).json({
+        error: 'NOTE_NOT_FOUND',
+      });
+    }
+
     const { data, error } = await clients.supabase
       .from('vault_notes')
       .update({
         title,
         content: noteBody,
+        owner_id: login.userId,
       })
       .eq('api_id', id)
-      .select('api_id')
+      .eq('owner_id', login.userId)
+      .select('api_id, owner_id')
       .maybeSingle();
 
     if (error) {
@@ -172,7 +227,10 @@ export default async function handler(req, res) {
       });
     }
 
-    if (!data) {
+    if (
+      !data
+      || data.owner_id !== login.userId
+    ) {
       return res.status(404).json({
         error: 'NOTE_NOT_FOUND',
       });
@@ -188,6 +246,7 @@ export default async function handler(req, res) {
       .from('vault_notes')
       .delete()
       .eq('api_id', id)
+      .eq('owner_id', login.userId)
       .select('api_id')
       .maybeSingle();
 

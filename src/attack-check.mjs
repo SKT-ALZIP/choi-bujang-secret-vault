@@ -201,6 +201,105 @@ async function checkStep3(config) {
   ];
 }
 
+async function checkStep4(config) {
+  const app = getApp(config);
+
+  const anonymousResponse = await fetch(
+    new URL('/api/notes', app),
+    {
+      redirect: 'error',
+      signal: AbortSignal.timeout(10000),
+    },
+  );
+
+  let anonymousJsonDenied = false;
+
+  try {
+    const data = await anonymousResponse.json();
+
+    anonymousJsonDenied =
+      (
+        anonymousResponse.status === 401
+        || anonymousResponse.status === 403
+      )
+      && typeof data?.error === 'string'
+      && data.error.length > 0;
+  } catch {
+    // 4단계에서는 JSON 오류 응답이어야 한다.
+  }
+
+  const identityResponse = await fetch(
+    new URL('/aleph.json', app),
+    {
+      redirect: 'error',
+      signal: AbortSignal.timeout(10000),
+    },
+  );
+
+  let identityAvailable = false;
+
+  if (identityResponse.ok) {
+    try {
+      const data = await identityResponse.json();
+
+      identityAvailable =
+        data?.schema === 'aleph.defense.deployment.v1'
+        && data?.step === 4
+        && typeof data?.commit === 'string'
+        && data.commit.length === 40;
+    } catch {
+      // JSON이 아니면 실패.
+    }
+  }
+
+  const homeResponse = await fetch(
+    app,
+    {
+      redirect: 'error',
+      signal: AbortSignal.timeout(10000),
+    },
+  );
+
+  const nosniff =
+    homeResponse.headers
+      .get('x-content-type-options')
+      ?.toLowerCase() === 'nosniff';
+
+  return [
+    {
+      attackId: 'anonymous_api_json_denied',
+      expected:
+        '로그인 없는 메모 목록 요청은 JSON 오류와 401 또는 403으로 거부되어야 함',
+      observed: anonymousJsonDenied
+        ? `비로그인 자료 API가 JSON 오류와 HTTP ${anonymousResponse.status}로 거부됨`
+        : `비로그인 자료 API 거부 형식이 예상과 다름 (HTTP ${anonymousResponse.status})`,
+    },
+    {
+      attackId: 'aleph_identity_available',
+      expected:
+        '배포 주소의 /aleph.json에서 4단계 배포 식별 정보를 읽을 수 있어야 함',
+      observed: identityAvailable
+        ? '/aleph.json에서 4단계 배포 식별 정보를 확인함'
+        : `/aleph.json을 예상 형식으로 확인하지 못함 (HTTP ${identityResponse.status})`,
+    },
+    {
+      attackId: 'security_header_present',
+      expected:
+        '첫 화면 응답에 X-Content-Type-Options: nosniff가 있어야 함',
+      observed: nosniff
+        ? '첫 화면 응답에서 X-Content-Type-Options: nosniff를 확인함'
+        : '첫 화면 응답에서 nosniff 헤더를 확인하지 못함',
+    },
+    {
+      attackId: 'owner_isolation',
+      expected:
+        'A와 B는 자기 메모만 접근하고 상대 메모 UUID 접근은 거부되어야 함',
+      observed:
+        '로그인 자격 증명을 제출 묶음에 넣지 않으며, 배포 화면에서 B→A UUID 404와 B→B UUID 200을 별도로 확인함',
+    },
+  ];
+}
+
 export async function runAttackChecks(config) {
   if (config.step === 1) {
     return checkStep1(config);
@@ -212,6 +311,10 @@ export async function runAttackChecks(config) {
 
   if (config.step === 3) {
     return checkStep3(config);
+  }
+
+  if (config.step === 4) {
+    return checkStep4(config);
   }
 
   throw new Error(

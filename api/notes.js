@@ -115,6 +115,16 @@ export default async function handler(req, res) {
       });
     }
 
+    if (
+      Object.prototype.hasOwnProperty.call(body, 'owner_id')
+      || Object.prototype.hasOwnProperty.call(body, 'userId')
+      || Object.prototype.hasOwnProperty.call(body, 'role')
+    ) {
+      return res.status(400).json({
+        error: 'OWNER_FIELD_NOT_ALLOWED',
+      });
+    }
+
     const title =
       typeof body.title === 'string'
         ? body.title.trim()
