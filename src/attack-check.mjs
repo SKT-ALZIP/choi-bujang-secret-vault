@@ -32,10 +32,13 @@ function getApp(config) {
 async function checkStep1(config) {
   const app = getApp(config);
 
-  const response = await fetch(new URL('/data.json', app), {
-    redirect: 'error',
-    signal: AbortSignal.timeout(10000),
-  });
+  const response = await fetch(
+    new URL('/data.json', app),
+    {
+      redirect: 'error',
+      signal: AbortSignal.timeout(10000),
+    },
+  );
 
   let visible = false;
 
@@ -66,10 +69,13 @@ async function checkStep1(config) {
 async function checkStep2(config) {
   const app = getApp(config);
 
-  const staticResponse = await fetch(new URL('/data.json', app), {
-    redirect: 'error',
-    signal: AbortSignal.timeout(10000),
-  });
+  const staticResponse = await fetch(
+    new URL('/data.json', app),
+    {
+      redirect: 'error',
+      signal: AbortSignal.timeout(10000),
+    },
+  );
 
   let staticCleared = false;
 
@@ -85,10 +91,13 @@ async function checkStep2(config) {
     }
   }
 
-  const apiResponse = await fetch(new URL('/api/notes', app), {
-    redirect: 'error',
-    signal: AbortSignal.timeout(10000),
-  });
+  const apiResponse = await fetch(
+    new URL('/api/notes', app),
+    {
+      redirect: 'error',
+      signal: AbortSignal.timeout(10000),
+    },
+  );
 
   let anonymousApiVisible = false;
   let count = 0;
@@ -124,6 +133,74 @@ async function checkStep2(config) {
   ];
 }
 
+async function checkStep3(config) {
+  const app = getApp(config);
+
+  const staticResponse = await fetch(
+    new URL('/data.json', app),
+    {
+      redirect: 'error',
+      signal: AbortSignal.timeout(10000),
+    },
+  );
+
+  let staticCleared = false;
+
+  if (staticResponse.ok) {
+    try {
+      const data = await staticResponse.json();
+
+      staticCleared =
+        Array.isArray(data?.notes)
+        && data.notes.length === 0;
+    } catch {
+      // Non-JSON response is not the expected static result.
+    }
+  }
+
+  const anonymousResponse = await fetch(
+    new URL('/api/notes', app),
+    {
+      redirect: 'error',
+      signal: AbortSignal.timeout(10000),
+    },
+  );
+
+  let anonymousDenied = false;
+
+  try {
+    const data = await anonymousResponse.json();
+
+    anonymousDenied =
+      anonymousResponse.status === 401
+      && data?.error === 'AUTH_REQUIRED';
+  } catch {
+    // Expected API response must be JSON.
+  }
+
+  return [
+    {
+      attackId: 'static_note_still_removed',
+      expected: '정적 data.json에는 가상 메모가 계속 없어야 함',
+      observed: staticCleared
+        ? '현재 정적 data.json의 notes가 비어 있음'
+        : `현재 정적 data.json을 안전한 빈 자료로 확인하지 못함 (HTTP ${staticResponse.status})`,
+    },
+    {
+      attackId: 'anonymous_api_denied',
+      expected: '비로그인 자료 API 요청은 자료 없이 401로 거부되어야 함',
+      observed: anonymousDenied
+        ? '비로그인 자료 API 요청이 AUTH_REQUIRED와 HTTP 401로 거부됨'
+        : `비로그인 자료 API 요청이 예상대로 거부되지 않음 (HTTP ${anonymousResponse.status})`,
+    },
+    {
+      attackId: 'authenticated_crud',
+      expected: '정상 로그인 사용자는 가상 메모 추가·수정·삭제가 가능해야 함',
+      observed: '미실행: 제출 묶음 자기 점검에는 로그인 비밀번호나 토큰을 넣지 않으며, 배포 화면에서 별도로 확인함',
+    },
+  ];
+}
+
 export async function runAttackChecks(config) {
   if (config.step === 1) {
     return checkStep1(config);
@@ -131,6 +208,10 @@ export async function runAttackChecks(config) {
 
   if (config.step === 2) {
     return checkStep2(config);
+  }
+
+  if (config.step === 3) {
+    return checkStep3(config);
   }
 
   throw new Error(

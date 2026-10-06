@@ -7,8 +7,8 @@ const config = JSON.parse(
   await readFile(resolve(root, 'aleph.config.json'), 'utf8'),
 );
 
-if (![1, 2].includes(config.step)) {
-  throw new Error('현재 빌드는 1단계 또는 2단계 설정만 지원합니다.');
+if (![1, 2, 3].includes(config.step)) {
+  throw new Error('현재 빌드는 1~3단계 설정을 지원합니다.');
 }
 
 await mkdir(resolve(root, 'public'), { recursive: true });

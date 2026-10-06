@@ -1,7 +1,6 @@
-import { randomUUID } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
-import config from '../aleph.config.json' with { type: 'json' };
-import { createLoginVerifier } from '../src/verify-login.mjs';
+import config from '../../aleph.config.json' with { type: 'json' };
+import { createLoginVerifier } from '../../src/verify-login.mjs';
 
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
@@ -40,7 +39,19 @@ function getServerClients() {
   };
 }
 
-async function readJsonBody(req) {
+function getNoteId(req) {
+  const value = req.query?.id;
+
+  if (Array.isArray(value)) {
+    return value[0] ?? '';
+  }
+
+  return typeof value === 'string'
+    ? value
+    : '';
+}
+
+function readJsonBody(req) {
   if (
     req.body
     && typeof req.body === 'object'
@@ -82,32 +93,44 @@ export default async function handler(req, res) {
     });
   }
 
+  const id = getNoteId(req);
+
+  if (!UUID.test(id)) {
+    return res.status(400).json({
+      error: 'INVALID_ID',
+    });
+  }
+
   if (req.method === 'GET') {
     const { data, error } = await clients.supabase
       .from('vault_notes')
       .select('api_id, title, content')
-      .eq('owner_id', login.userId)
-      .order('id', { ascending: true });
+      .eq('api_id', id)
+      .maybeSingle();
 
     if (error) {
-      console.error('vault_notes list failed');
+      console.error('vault_notes item read failed');
 
       return res.status(500).json({
         error: 'DATA_READ_FAILED',
       });
     }
 
+    if (!data) {
+      return res.status(404).json({
+        error: 'NOTE_NOT_FOUND',
+      });
+    }
+
     return res.status(200).json({
-      notes: data.map((note) => ({
-        id: note.api_id,
-        title: note.title,
-        body: note.content,
-      })),
+      id: data.api_id,
+      title: data.title,
+      body: data.content,
     });
   }
 
-  if (req.method === 'POST') {
-    const body = await readJsonBody(req);
+  if (req.method === 'PUT') {
+    const body = readJsonBody(req);
 
     if (!body) {
       return res.status(400).json({
@@ -131,47 +154,64 @@ export default async function handler(req, res) {
       });
     }
 
-    let id;
-
-    if (body.id === undefined || body.id === null || body.id === '') {
-      id = randomUUID();
-    } else if (typeof body.id === 'string' && UUID.test(body.id)) {
-      id = body.id;
-    } else {
-      return res.status(400).json({
-        error: 'INVALID_ID',
-      });
-    }
-
-    const { error } = await clients.supabase
+    const { data, error } = await clients.supabase
       .from('vault_notes')
-      .insert({
-        api_id: id,
-        owner_id: login.userId,
+      .update({
         title,
         content: noteBody,
-      });
+      })
+      .eq('api_id', id)
+      .select('api_id')
+      .maybeSingle();
 
     if (error) {
-      console.error('vault_notes insert failed');
-
-      if (error.code === '23505') {
-        return res.status(409).json({
-          error: 'ID_ALREADY_EXISTS',
-        });
-      }
+      console.error('vault_notes update failed');
 
       return res.status(500).json({
         error: 'DATA_WRITE_FAILED',
       });
     }
 
-    return res.status(201).json({
-      id,
+    if (!data) {
+      return res.status(404).json({
+        error: 'NOTE_NOT_FOUND',
+      });
+    }
+
+    return res.status(200).json({
+      id: data.api_id,
     });
   }
 
-  res.setHeader('Allow', 'GET, POST');
+  if (req.method === 'DELETE') {
+    const { data, error } = await clients.supabase
+      .from('vault_notes')
+      .delete()
+      .eq('api_id', id)
+      .select('api_id')
+      .maybeSingle();
+
+    if (error) {
+      console.error('vault_notes delete failed');
+
+      return res.status(500).json({
+        error: 'DATA_WRITE_FAILED',
+      });
+    }
+
+    if (!data) {
+      return res.status(404).json({
+        error: 'NOTE_NOT_FOUND',
+      });
+    }
+
+    return res.status(204).end();
+  }
+
+  res.setHeader(
+    'Allow',
+    'GET, PUT, DELETE',
+  );
 
   return res.status(405).json({
     error: 'METHOD_NOT_ALLOWED',

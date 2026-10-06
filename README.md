@@ -50,3 +50,46 @@
 
 ```sh
 git grep -n -E '실습용 가상 .* 기록' HEAD
+
+## 3단계 저장점 — 진짜 로그인을 붙임
+
+3단계에서는 Supabase Auth의 이메일·비밀번호 로그인을 붙였습니다.
+브라우저는 Supabase 공식 SDK로 로그인·로그아웃하며 비밀번호나 JWT를
+직접 만들지 않습니다.
+
+자료 API는 브라우저가 보낸 사용자 ID나 역할을 신뢰하지 않고,
+`Authorization: Bearer ...` 토큰을 `src/verify-login.mjs`로 검사합니다.
+토큰이 없거나 검증에 실패하면 자료 없이 401로 거부합니다.
+
+로그인 발급자는 다음 Supabase Auth 프로젝트입니다.
+
+- issuer: `https://qzyloovynaqxfbqzhyro.supabase.co/auth/v1`
+- audience: `authenticated`
+
+로그인한 사용자는 가상 메모를 추가·수정·삭제할 수 있습니다.
+새 메모의 `owner_id`에는 브라우저가 보낸 값이 아니라 서버가 검증한
+사용자 ID를 저장합니다.
+
+현재 자료 API 경로는 다음과 같습니다.
+
+- `GET /api/notes`
+- `POST /api/notes`
+- `GET /api/notes/:id`
+- `PUT /api/notes/:id`
+- `DELETE /api/notes/:id`
+
+목록 조회는 로그인한 사용자의 `owner_id`에 해당하는 메모만 반환합니다.
+다만 개별 `/:id` GET·PUT·DELETE에서는 아직 메모 소유자를 검사하지 않습니다.
+따라서 정상 로그인한 다른 사용자가 타인의 메모 UUID를 알면 접근할 수 있는
+허점이 남아 있으며, 이 문제는 4단계에서 막습니다.
+
+서버 전용 `SUPABASE_SECRET_KEY`는 Vercel 환경변수에서만 사용하며
+브라우저 코드, Git 저장소, API 응답에 넣지 않습니다.
+
+### 3단계 확인 절차
+
+시크릿 창이나 로그아웃 상태에서 자료 API를 열면 자료 대신 인증 오류가
+반환되어야 합니다.
+
+```sh
+curl -i https://choi-bujang-secret-vault-inky.vercel.app/api/notes
